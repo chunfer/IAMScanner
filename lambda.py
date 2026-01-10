@@ -214,7 +214,7 @@ def generate_alerts(iam_client, account_data, splunk_data):
             UserName = user["UserName"]
         )
         user_score = 0
-        context_score = scores_db["contexts"][account_data["context"]]
+        context_score = scores_db["contexts"][account_data["Context"]]
 
         for attached_policy in attached_policies["AttachedPolicies"]:
             policy_data = iam_client.get_policy(
@@ -241,7 +241,7 @@ def generate_alerts(iam_client, account_data, splunk_data):
             event_id = str(uuid4())
             alert = {
                 "EventId": event_id,
-                "AccessKeyDigest": b64encode(sha256(access_key["AccessKeyId"].encode()).hexdigest()).decode()
+                "AccessKeyDigest": b64encode(sha256(access_key["AccessKeyId"].encode()).hexdigest().encode()).decode(),
             }
             alert.update(access_key)
             alert["AccessKeyId"] = f'{access_key["AccessKeyId"][:4]}****{access_key["AccessKeyId"][-4:]}' # Turn the access key into a snippet to hide sensitive data
