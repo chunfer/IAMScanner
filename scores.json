@@ -35,8 +35,8 @@
                 "AssumeRoleWithWebIdentity": 0.98
             },
             "iam": {
-                "PassRole": 1.00,
-                "CreateServiceLinkedRole": 1.00,
+                "PassRole": 0.98,
+                "CreateServiceLinkedRole": 0.98,
                 "SimulatePrincipalPolicy": 0.90,
                 "SimulateCustomPolicy": 0.90
             }
