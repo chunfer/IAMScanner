@@ -271,7 +271,7 @@ def generate_alerts(iam_client, account_data, splunk_data):
 
             total_access_keys += 1
     
-    print(f"Total AWS Access Keys found: {total_access_keys}")
+    print(f"Total AWS Access Keys found in account {account_data['AccountName']}: {total_access_keys}")
 
 
 def get_ou_name(org_client, ou_id):
