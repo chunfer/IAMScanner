@@ -16,17 +16,17 @@ Parameters:
   LambdaName:
     AllowedPattern: '[-_a-zA-Z0-9]+'
     Default: IAMScanner
-    Description: Provide the name for the Lambda Function to be created by the script. Maximum 64 characters allowed
+    Description: Provide the name for the Lambda Function to be created.
     Type: String
   MemberRoleName:
     AllowedPattern: '[-_a-zA-Z0-9]+'
     Default: IAMScannerMemberRole
-    Description: Provide an role name for the Member Roles. Maximum 64 characters allowed
+    Description: Provide an role name for the Member Roles.
     Type: String
   SplunkSecretName:
     AllowedPattern: '[-_a-zA-Z0-9]+'
     Default: SplunkSecret
-    Description: Provide the Name of the secret that provides access to make requests to Splunk
+    Description: Provide the Name of the secret that provides access to make requests to Splunk.
     Type: String
   DeploymentMode:
     Type: String
