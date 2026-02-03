@@ -28,22 +28,10 @@ Parameters:
     Default: SplunkSecret
     Description: Provide the Name of the secret that provides access to make requests to Splunk.
     Type: String
-  DeploymentMode:
-    Type: String
-    Default: "Organization"
-    AllowedValues:
-      - "Organization"
-      - "Single Account"
-    Description: "Choose if the deployment of Fargate Defender will be across the organization or a only this account"
   OrganizationalUnitIds:
     Description: Provide the organizational root OU ID (Prefix like r-) if you want to run it for all the accounts under this Organization. Else provide a comma-separated list of OU ids(Prefix like ou-).
     Type: CommaDelimitedList
-Conditions:
-  IsOrgDeployment:
-    Fn::Equals:
-      - 
-        Ref: DeploymentMode
-      - "Organization"
+
 Resources:
   IAMScannerLambdaPolicy:
     Type: AWS::IAM::ManagedPolicy
@@ -152,7 +140,6 @@ Resources:
 
   MemberRolesStackSet:
     Type: AWS::CloudFormation::StackSet
-    Condition: IsOrgDeployment
     Properties:
       AutoDeployment:
         Enabled: true
