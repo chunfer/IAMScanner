@@ -246,7 +246,6 @@ def generate_alerts(iam_client, account_data, splunk_data):
             }
             alert.update(access_key)
             alert["AccessKeyId"] = f'{access_key["AccessKeyId"][:4]}****{access_key["AccessKeyId"][-4:]}' # Turn the access key into a snippet to hide sensitive data
-            alert["time"] = int(datetime.now().timestamp())
             alert["CreateDate"] = int(access_key["CreateDate"].timestamp())
             alert.update(account_data)
             alert["User"] = user
