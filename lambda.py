@@ -1,6 +1,7 @@
 from fnmatch import fnmatch
 from datetime import datetime
 from boto3 import client
+from botocore.exceptions import ClientError
 from os import getenv
 from uuid import uuid4
 from json import loads
@@ -344,28 +345,31 @@ def handler(event = "", ctx = ""):
 
         # Assume the member roles in the member accounts and generate alerts
         for account_data in accounts_data:
-            assume_role_arn = f"arn:aws:iam::{account_data['AccountId']}:role/{MEMBER_ROLE}"
-            assumed_role_object = sts_client.assume_role(
-                RoleArn=assume_role_arn,
-                RoleSessionName=ROLE_SESSION_NAME
-            )
+            try:
+                assume_role_arn = f"arn:aws:iam::{account_data['AccountId']}:role/{MEMBER_ROLE}"
+                assumed_role_object = sts_client.assume_role(
+                    RoleArn=assume_role_arn,
+                    RoleSessionName=ROLE_SESSION_NAME
+                )
 
-            # Extract the temporary credentials
-            credentials = assumed_role_object['Credentials']
+                # Extract the temporary credentials
+                credentials = assumed_role_object['Credentials']
 
-            # Create an IAM client using the temporary credentials
-            iam_client = client(
-                'iam',
-                aws_access_key_id=credentials['AccessKeyId'],
-                aws_secret_access_key=credentials['SecretAccessKey'],
-                aws_session_token=credentials['SessionToken']
-            )
+                # Create an IAM client using the temporary credentials
+                iam_client = client(
+                    'iam',
+                    aws_access_key_id=credentials['AccessKeyId'],
+                    aws_secret_access_key=credentials['SecretAccessKey'],
+                    aws_session_token=credentials['SessionToken']
+                )
 
-            # Start a thread to generate the alerts
-            account_thread = Thread(target=generate_alerts, args=(iam_client, account_data, splunk_data))
-            account_thread.start()
+                # Start a thread to generate the alerts
+                account_thread = Thread(target=generate_alerts, args=(iam_client, account_data, splunk_data))
+                account_thread.start()
 
-            threads.append(account_thread)
+                threads.append(account_thread)
+            except ClientError as e:
+                print(e)
 
         for account_thread in threads:
             account_thread.join()

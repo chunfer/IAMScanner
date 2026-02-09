@@ -1,0 +1,347 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Stack to trigger IAM Scanner on Access Key creation
+
+Parameters:
+  OrganizationId:
+    Description: The ID of your AWS Organization (e.g., o-xxxxxxxxxx).
+    Type: String
+  TrailName:
+    Default: IAMScannerTrail
+    Description: Provide the name for the CloudTrail
+    Type: String
+  LambdaName:
+    Default: IAMScanner
+    Description: Provide the name for the Lambda Function to be of the Scanner.
+    Type: String
+  EventBusRuleName:
+    Default: IAMScannerBusRule
+    Description: Provide the name for the rule to create in the EventBridge bus.
+    Type: String
+  OrganizationalUnitIds:
+    Description: Provide the organizational root OU ID (Prefix like r-) if you want to run it for all the accounts under this Organization. Else provide a comma-separated list of OU ids(Prefix like ou-).
+    Type: CommaDelimitedList
+
+Resources:
+  CloudTrailLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: 
+        Fn::Sub: "/aws/cloudtrail/${TrailName}"
+      RetentionInDays: 90
+
+  CloudTrailLoggingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: "cloudtrail.amazonaws.com"
+            Action: "sts:AssumeRole"
+      Policies:
+        - PolicyName: "CloudTrailToCloudWatch"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: 
+                  Fn::GetAtt: [CloudTrailLogGroup, Arn]
+
+  CloudTrailS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: 
+        Fn::Sub: "org-cloudtrail-logs-${AWS::AccountId}-${AWS::Region}"
+
+  CloudTrailBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: 
+        Ref: CloudTrailS3Bucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: "AWSCloudTrailAclCheck"
+            Effect: Allow
+            Principal:
+              Service: "cloudtrail.amazonaws.com"
+            Action: "s3:GetBucketAcl"
+            Resource: 
+              Fn::GetAtt: [CloudTrailS3Bucket, Arn]
+          - Sid: "AWSCloudTrailWrite"
+            Effect: Allow
+            Principal:
+              Service: "cloudtrail.amazonaws.com"
+            Action: "s3:PutObject"
+            Resource: 
+              Fn::Sub: "arn:aws:s3:::${CloudTrailS3Bucket}/AWSLogs/${AWS::AccountId}/*"
+            Condition:
+              StringEquals:
+                "s3:x-amz-acl": "bucket-owner-full-control"
+          - Sid: "AWSCloudTrailWriteOrg"
+            Effect: Allow
+            Principal:
+              Service: "cloudtrail.amazonaws.com"
+            Action: "s3:PutObject"
+            Resource: 
+              Fn::Sub: "arn:aws:s3:::${CloudTrailS3Bucket}/AWSLogs/${OrganizationId}/*"
+            Condition:
+              StringEquals:
+                "s3:x-amz-acl": "bucket-owner-full-control"
+
+  OrganizationTrail:
+    Type: AWS::CloudTrail::Trail
+    DependsOn: CloudTrailBucketPolicy
+    Properties:
+      TrailName: 
+        Ref: TrailName
+      S3BucketName: 
+        Ref: CloudTrailS3Bucket
+      IsLogging: true
+      IsMultiRegionTrail: true
+      IsOrganizationTrail: true
+      IncludeGlobalServiceEvents: true
+      CloudWatchLogsLogGroupArn: 
+        Fn::GetAtt: [CloudTrailLogGroup, Arn]
+      CloudWatchLogsRoleArn: 
+        Fn::GetAtt: [CloudTrailLoggingRole, Arn]
+      EventSelectors:
+          - ReadWriteType: WriteOnly
+            IncludeManagementEvents: true
+
+  EventBusPolicy:
+    Type: AWS::Events::EventBusPolicy
+    Properties:
+      EventBusName: default
+      StatementId: AllowOrgAccounts
+      Statement:
+        Effect: Allow
+        Principal: "*"
+        Action: "events:PutEvents"
+        Resource:
+          Fn::Sub: "arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/default"
+        Condition:
+          StringEquals:
+            aws:PrincipalOrgID:
+              Ref: OrganizationId
+
+  EventBusRulePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: 
+        Fn::Sub: "${EventBusRuleName}Policy"
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Sid: InvokeLambda
+          Effect: Allow
+          Action: 
+          - "lambda:InvokeFunction"
+          Resource: 
+            Fn::Sub: "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${LambdaName}"
+
+  EventBusRuleRole:
+    Type: AWS::IAM::Role
+    DependsOn:
+    - EventBusRulePolicy
+    Properties:
+      RoleName: 
+        Fn::Sub: "${EventBusRuleName}Role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: "events.amazonaws.com"
+          Action:
+          - "sts:AssumeRole"
+          Condition:
+            StringEquals:
+              "aws:SourceArn":
+                Fn::Sub: "arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/${EventBusRuleName}"
+      ManagedPolicyArns:
+      - Fn::GetAtt: [EventBusRulePolicy, PolicyArn]
+
+  EventBusRule:
+    Type: AWS::Events::Rule
+    DependsOn:
+    - EventBusRuleRole
+    Properties:
+      Description: Invokes IAM Scanner Lambda
+      Name:
+        Ref: EventBusRuleName
+      EventBusName: default
+      State: ENABLED
+      EventPattern:
+        source:
+        - aws.iam
+        detail-type: 
+        - AWS API Call via CloudTrail
+        detail:
+          eventSource: 
+          - iam.amazonaws.com
+          eventName:
+          - CreateAccessKey
+      Targets:
+        - Arn: 
+            Fn::Sub: "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:${LambdaName}"
+          Id: TriggerLambda
+          RoleArn: 
+            Fn::GetAtt: [EventBusRuleRole, Arn]
+
+  MemberEventBusStackSet:
+    Type: AWS::CloudFormation::StackSet
+    Properties:
+      AutoDeployment:
+        Enabled: true
+        RetainStacksOnAccountRemoval: false
+      OperationPreferences:
+        FailureTolerancePercentage: 100
+        RegionConcurrencyType: PARALLEL
+      Parameters:
+      - ParameterKey: EventBusRuleName
+        ParameterValue: 
+          Ref: EventBusRuleName
+      - ParameterKey: EventBusHubArn
+        ParameterValue: 
+          Fn::Sub: "arn:aws:events:${AWS::Region}:${AWS::AccountId}:event-bus/default"
+      Capabilities:
+      - CAPABILITY_NAMED_IAM
+      PermissionModel: SERVICE_MANAGED
+      StackInstancesGroup:
+      - DeploymentTargets:
+          OrganizationalUnitIds: 
+            Ref: OrganizationalUnitIds
+        Regions:
+          - Ref: AWS::Region
+      StackSetName:
+        Ref: AWS::StackName
+      TemplateBody: |
+        {
+          "AWSTemplateFormatVersion": "2010-09-09",
+          "Description": "Stack to trigger IAM Scanner on Access Key creation",
+          "Parameters": {
+            "EventBusRuleName": {
+              "Default": "IAMScannerBusRule",
+              "Description": "Provide the name for the rule to create in the EventBridge bus.",
+              "Type": "String"
+            },
+            "EventBusHubArn": {
+              "Description": "Provide the ARN of the Event Bus that will receive the events.",
+              "Type": "String"
+            }
+          },
+          "Resources": {
+            "EventBusRulePolicy": {
+              "Type": "AWS::IAM::ManagedPolicy",
+              "Properties": {
+                "ManagedPolicyName": {
+                  "Fn::Sub": "${EventBusRuleName}Policy"
+                },
+                "PolicyDocument": {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                    {
+                      "Sid": "InvokeLambda",
+                      "Effect": "Allow",
+                      "Action": [
+                        "events:PutEvents"
+                      ],
+                      "Resource": {
+                        "Ref": "EventBusHubArn"
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "EventBusRuleRole": {
+              "Type": "AWS::IAM::Role",
+              "DependsOn": [
+                "EventBusRulePolicy"
+              ],
+              "Properties": {
+                "RoleName": {
+                  "Fn::Sub": "${EventBusRuleName}Role"
+                },
+                "AssumeRolePolicyDocument": {
+                  "Version": "2012-10-17",
+                  "Statement": [
+                    {
+                      "Effect": "Allow",
+                      "Principal": {
+                        "Service": "events.amazonaws.com"
+                      },
+                      "Action": [
+                        "sts:AssumeRole"
+                      ],
+                      "Condition": {
+                        "StringEquals": {
+                          "aws:SourceArn": {
+                            "Fn::Sub": "arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/${EventBusRuleName}"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                },
+                "ManagedPolicyArns": [
+                  {
+                    "Fn::GetAtt": [
+                      "EventBusRulePolicy",
+                      "PolicyArn"
+                    ]
+                  }
+                ]
+              }
+            },
+            "EventBusRule": {
+              "Type": "AWS::Events::Rule",
+              "DependsOn": [
+                "EventBusRuleRole"
+              ],
+              "Properties": {
+                "Description": "Sends Create Access Key events to the Hub",
+                "Name": {
+                  "Ref": "EventBusRuleName"
+                },
+                "EventBusName": "default",
+                "State": "ENABLED",
+                "EventPattern": {
+                  "source": [
+                    "aws.iam"
+                  ],
+                  "detail-type": [
+                    "AWS API Call via CloudTrail"
+                  ],
+                  "detail": {
+                    "eventSource": [
+                      "iam.amazonaws.com"
+                    ],
+                    "eventName": [
+                      "CreateAccessKey"
+                    ]
+                  }
+                },
+                "Targets": [
+                  {
+                    "Arn": {
+                      "Ref": "EventBusHubArn"
+                    },
+                    "Id": "CrossRegionDestinationBus",
+                    "RoleArn": {
+                      "Fn::GetAtt": [
+                        "EventBusRuleRole",
+                        "Arn"
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
